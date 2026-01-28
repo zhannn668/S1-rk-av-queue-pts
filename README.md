@@ -1,58 +1,80 @@
-# rk-av-reprokit
+# S1-rk-av-queue-pts
 
-一个面向 **Rockchip RK35xx（RK3568/RK3588）** 的最小可复现实验工程：  
-**V4L2 采集 → MPP H.264 编码 → 文件输出**，同时采集 **ALSA PCM 音频**，并提供统一配置与每秒统计输出，方便你做“花屏/丢帧/码率/音频卡顿”定位。
+一个面向 **Rockchip RK35xx（RK3568 / RK3588）** 的 **S1 阶段音视频数据面工程**，  
+在 S0（直连采集/编码）的基础上，完成了 **队列化 + 时间戳（PTS）重构**。
 
-> 默认录制 10 秒，输出 `out.h264` + `out.pcm`，并在运行时打印设备格式（fourcc/stride/plane）以及每秒统计。
-
----
-
-## 功能特性
-
-### 1) 统一配置入口
-- 所有关键参数集中在 `AppConfig`：
-  - 视频：分辨率 / 帧率 / 码率 / 设备节点
-  - 音频：采样率 / 通道数 / 设备节点
-  - 输出：`out.h264` / `out.pcm` / 录制时长
-- 启动时打印一行最终配置摘要：`[CFG] ...`
-
-### 2) 统一日志与统计（每秒一行）
-每秒打印：
-- `video_fps`：编码输出帧数
-- `enc_bitrate`：编码输出码率（kbps）
-- `audio_chunks_per_sec`：音频写入块数
-- `drop_count`：丢帧计数（基于 V4L2 `sequence` gap + 编码/写入失败）
-
-同时在打开相机后打印设备格式（排查花屏关键）：
-- `fourcc`
-- `bytesperline (stride)`
-- `plane sizeimage`
-
-### 3) 可复现实验产物
-- 录制 10 秒输出：
-  - `out.h264`（Annex-B H.264 bitstream）
-  - `out.pcm`（s16le raw PCM）
-- 提供 `docs/EXPERIMENT.md`：包含 `ffprobe`/`ffmpeg`/`mediainfo` 校验命令
+> 目标：为后续 **A/V 同步、推流、录制、AI 分支、多订阅者** 打下稳定的数据面地基。
 
 ---
 
-## 目录结构
+## 核心特性（S1）
 
-```text
-rk-av-reprokit/
+### 1️⃣ 生产者 → 队列 → 消费者（数据面解耦）
+- 视频采集、视频编码、音频采集、文件写入 **完全线程解耦**
+- 使用 **有界阻塞队列（mutex + condvar）**，稳定优先
+- 明确背压边界，避免“跑着跑着内存爆炸”
+
+队列划分：
+- `RawVideoQueue`：原始 NV12 帧  
+- `H264Queue`：编码后的 H.264 packet  
+- `AudioQueue`：PCM 音频块  
+
+---
+
+### 2️⃣ 统一时间戳（PTS）策略
+- **视频 PTS**  
+  - 在 V4L2 `DQBUF` 成功后打 `CLOCK_MONOTONIC`
+- **音频 PTS**  
+  - 起始时间取 monotonic  
+  - 后续通过 **采样计数累计推进**（避免 now() 抖动）
+
+> 这是后续做 A/V sync、RTMP、MP4 的关键地基。
+
+---
+
+### 3️⃣ 实时统计与验收日志
+程序每秒输出：
+
+- `[STAT]`
+  - `video_fps`
+  - `enc_bitrate`
+  - `audio_chunks_per_sec`
+  - `drop_count`
+- `[Q]`
+  - 各队列当前深度 / 容量
+- `[PTS]`
+  - `video_delta`（帧间隔，≈33.3ms @30fps）
+  - `audio_delta`（≈21.333ms @1024/48k）
+
+示例：
+```
+[Q] raw=0/8 h264=0/64 audio=0/256
+[PTS] video_delta=33.347ms
+[PTS] audio_delta=21.333ms
+```
+
+---
+
+## 目录结构（S1）
+
+```
+S1-rk-av-queue-pts/
+├─ include/rkav/
+│  ├─ types.h        # VideoFrame / AudioChunk / EncodedPacket
+│  ├─ bqueue.h       # 有界阻塞队列
+│  └─ time.h         # monotonic 时间工具
 ├─ src/
 │  ├─ main.c
-│  ├─ app_config.c/.h
-│  ├─ av_stats.c/.h
-│  ├─ v4l2_capture.c/.h
-│  ├─ encoder_mpp.c/.h
-│  ├─ audio_capture.c/.h
-│  ├─ sink.c/.h
-│  └─ log.c/.h
+│  ├─ v4l2_capture.c
+│  ├─ encoder_mpp.c
+│  ├─ audio_capture.c
+│  ├─ bqueue.c
+│  ├─ av_stats.c
+│  ├─ sink.c
+│  └─ time.c
 ├─ docs/
 │  └─ EXPERIMENT.md
 ├─ Makefile
-├─ CMakeLists.txt
 └─ README.md
 ```
 
@@ -60,110 +82,52 @@ rk-av-reprokit/
 
 ## 编译
 
-### 方式 A：Makefile（交叉编译/Buildroot 常用）
-
 ```bash
 make -j
 ```
 
-> 如果你的 MPP 库名是 `-lmpp` 而不是 `-lrockchip_mpp`，用：
+> 如果你的系统使用 `-lmpp`：
 ```bash
 make -j MPP_LIB=-lmpp
-```
-
-### 方式 B：CMake（主机编译/调试也方便）
-
-```bash
-mkdir -p build
-cd build
-cmake ..
-cmake --build . -j
 ```
 
 ---
 
 ## 运行
 
-直接运行默认参数（10 秒）：
-
+### 默认运行（10 秒）
 ```bash
-./bin/rkav_repro
+./s1_rk_queue
 ```
 
-自定义参数示例：
-
+### 自定义参数示例
 ```bash
-./bin/rkav_repro \
-  --video-dev /dev/video0 \
-  --size 1280x720 \
-  --fps 30 \
-  --bitrate 2000000 \
-  --audio-dev hw:0,0 \
-  --sr 48000 \
-  --ch 2 \
-  --sec 10 \
-  --out-h264 out.h264 \
-  --out-pcm out.pcm
+./s1_rk_queue   --video-dev /dev/video0   --size 1280x720   --fps 30   --bitrate 2000000   --audio-dev hw:0,0   --sr 48000   --ch 2   --sec 10   --out-h264 out.h264   --out-pcm out.pcm
 ```
 
 ---
 
-## 输出说明
+## 输出文件
+- `out.h264`：H.264 Annex-B 码流  
+- `out.pcm`：s16le 原始 PCM 音频  
 
-运行时你会看到三类关键日志：
-
-1) 配置摘要（只一行）
-```text
-[CFG] video=/dev/video0 1280x720@30 bitrate=2000000 | audio=hw:0,0 48000Hz ch=2 | out=out.h264,out.pcm | sec=10
-```
-
-2) 设备格式（排查花屏非常关键）
-```text
-[v4l2] device fmt: fourcc=NV12 w=1280 h=720 num_planes=2
-[v4l2] plane[0]: bytesperline(stride)=... sizeimage=...
-[v4l2] plane[1]: bytesperline(stride)=... sizeimage=...
-```
-
-3) 每秒统计
-```text
-[STAT] video_fps=30 enc_bitrate=1950kbps audio_chunks_per_sec=50 drop_count=0
-```
-
----
-
-## 可复现实验校验
-
-详细命令见：`docs/EXPERIMENT.md`
-
-常用校验：
-
+验证：
 ```bash
-ffprobe -hide_banner -f h264 -show_streams -show_format out.h264
-ffprobe -hide_banner -f s16le -ar 48000 -ac 2 -show_streams -show_format out.pcm
-ffmpeg -y -f s16le -ar 48000 -ac 2 -i out.pcm out.wav
-mediainfo out.h264
-mediainfo out.wav
+ffplay -f h264 out.h264
+ffplay -f s16le -ar 48000 -ac 2 out.pcm
 ```
 
 ---
 
-## 常见问题
-
-### 1) 花屏/颜色异常
-优先看启动时打印的：
-- fourcc 是否符合预期（NV12/NV12M/YUYV）
-- stride(bytesperline) 是否比 width 大（很多设备会对齐到 16/32）
-- plane sizeimage 是否合理
-
-### 2) drop_count 上升
-- V4L2 `sequence` gap：说明采集端已经丢帧（CPU/IO/带宽不够或驱动队列问题）
-- 编码或写文件失败：检查存储写入速度、权限、磁盘满
-
-### 3) 音频设备打不开
-- 用 `arecord -l` 查看设备
-- 修改 `--audio-dev` 为实际 ALSA 设备，例如 `hw:1,0`
+## 当前阶段说明
+- 本仓库对应 **S1：队列 + PTS 数据面**
+- 尚未包含：
+  - IPC / daemon
+  - 多订阅者 fan-out
+  - A/V 同步与封装
+- 这些将在后续 `rk-av-framework` 阶段引入
 
 ---
 
 ## License
-按你的仓库需要自行补充（MIT / Apache-2.0 等）。
+TBD
