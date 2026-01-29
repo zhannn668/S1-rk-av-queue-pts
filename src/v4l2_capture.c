@@ -1,4 +1,15 @@
-// src/v4l2_capture.c
+/**
+ * @file v4l2_capture.c
+ * @brief V4L2 视频采集模块实现
+ * 
+ * 封装 Linux V4L2 API，提供视频采集功能。
+ * 
+ * 实现细节：
+ * - 使用多平面（MPLANE）API 支持 NV12M 格式
+ * - 使用 MMAP 方式映射内核缓冲区
+ * - 非阻塞模式（O_NONBLOCK）避免 DQBUF 阻塞
+ * - 自动将 NV12M 两个平面合成为连续 NV12 数据
+ */
 #include "v4l2_capture.h"
 #include "log.h"
 
@@ -12,8 +23,10 @@
 
 #include <linux/videodev2.h>
 
+/** 模块日志标签 */
 #define TAG "v4l2"
 
+/** 最大平面数（用于 v4l2_plane 数组） */
 #ifndef VIDEO_MAX_PLANES
 #define VIDEO_MAX_PLANES 8
 #endif

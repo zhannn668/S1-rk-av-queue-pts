@@ -1,9 +1,30 @@
-// src/encoder_mpp.c
+/**
+ * @file encoder_mpp.c
+ * @brief Rockchip MPP 硬件编码器实现
+ *
+ * 本模块封装了 Rockchip MPP（Media Process Platform）硬件编码器接口，
+ * 用于将 NV12 格式的视频帧编码为 H.264/AVC 格式。
+ *
+ * 主要功能：
+ * - 初始化 MPP 编码器上下文，配置编码参数
+ * - 使用 ION 缓冲区进行零拷贝（或最小化拷贝）输入
+ * - 支持 CBR 码率控制
+ * - 提供两种编码接口：直接写入 Sink 或返回编码后的数据包
+ *
+ * 条件编译：
+ * - 当 RK_MPP_AVAILABLE=1 时，编译真正的 MPP 编码功能
+ * - 当 RK_MPP_AVAILABLE=0 时，编译占位实现（返回错误）
+ *
+ * 依赖：
+ * - Rockchip MPP 开发库（rk_mpi.h, librockchip_mpp.so）
+ * - ION 内存分配器
+ */
 #include "encoder_mpp.h"
 #include "log.h"
 
 #include <string.h>
 
+/** 日志标签 */
 #define TAG "mpp_enc"
 
 #if !RK_MPP_AVAILABLE
@@ -304,6 +325,20 @@ int encoder_mpp_encode(EncoderMPP *enc,
     return 0;
 }
 
+/**
+ * @brief 编码一帧并返回数据包
+ *
+ * 与 encoder_mpp_encode() 类似，但不直接写入 sink，
+ * 而是分配内存返回编码后的 H.264 数据包，调用者负责 free()。
+ *
+ * @param enc          编码器实例
+ * @param frame_data   输入帧数据（NV12 格式）
+ * @param frame_size   输入帧大小
+ * @param out_data     输出：编码后数据指针（需要 free）
+ * @param out_size     输出：编码后数据大小
+ * @param out_keyframe 输出：是否为关键帧（I 帧）
+ * @return             0 成功，-1 失败
+ */
 int encoder_mpp_encode_packet(EncoderMPP *enc,
                               const uint8_t *frame_data,
                               size_t frame_size,
@@ -324,14 +359,14 @@ int encoder_mpp_encode_packet(EncoderMPP *enc,
         return -1;
     }
 
-    // 1) copy input to MPP input buffer
+    /* 步骤 1：将输入数据拷贝到 MPP 输入缓冲 */
     void  *dst = mpp_buffer_get_ptr(enc->frm_buf);
     size_t copy_size = frame_size > enc->frame_size ? enc->frame_size : frame_size;
     memcpy(dst, frame_data, copy_size);
     if (copy_size < enc->frame_size)
         memset((uint8_t *)dst + copy_size, 0, enc->frame_size - copy_size);
 
-    // 2) build MppFrame and put
+    /* 步骤 2：构建 MppFrame 并投递给编码器 */
     MppFrame frame = NULL;
     MPP_RET ret = mpp_frame_init(&frame);
     if (ret) {
@@ -354,11 +389,11 @@ int encoder_mpp_encode_packet(EncoderMPP *enc,
         return -1;
     }
 
-    // 3) get packet
+    /* 步骤 3：获取编码输出包 */
     MppPacket pkt = NULL;
     ret = enc->mpi->encode_get_packet(enc->ctx, &pkt);
     if (ret) {
-        // no packet ready is OK
+        /* 暂时没有输出 packet，正常情况 */
         return 0;
     }
 
@@ -368,14 +403,16 @@ int encoder_mpp_encode_packet(EncoderMPP *enc,
     void  *ptr = mpp_packet_get_pos(pkt);
     size_t len = mpp_packet_get_length(pkt);
 
+    /* 检测是否为关键帧（I 帧） */
     bool key = false;
 #ifdef MPP_PACKET_FLAG_INTRA
     RK_U32 flag = mpp_packet_get_flag(pkt);
     if (flag & MPP_PACKET_FLAG_INTRA) key = true;
 #else
-    (void)key; // fallback
+    (void)key; /* 无法判断时默认 false */
 #endif
 
+    /* 分配内存并拷贝编码结果 */
     if (ptr && len > 0 && out_data) {
         uint8_t *cpy = (uint8_t *)malloc(len);
         if (!cpy) {

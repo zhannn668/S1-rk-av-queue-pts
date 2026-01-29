@@ -1,4 +1,10 @@
-// src/sink.c
+/**
+ * @file sink.c
+ * @brief 编码输出 Sink 模块实现
+ * 
+ * 提供 Sink（下游/落地端）的初始化、打开、写入、关闭功能。
+ * 当前主要实现文件 Sink，管道 Sink 预留待后续扩展。
+ */
 #include "sink.h"
 #include "log.h"
 

@@ -1,4 +1,10 @@
-// app_config.c
+/**
+ * @file app_config.c
+ * @brief 应用配置模块实现
+ * 
+ * 提供配置的默认值加载、命令行解析、摘要打印等功能。
+ * 使用 POSIX getopt_long 解析命令行长短选项。
+ */
 #include "app_config.h"
 #include "log.h"
 
@@ -35,27 +41,32 @@ static int parse_size(const char *s, int *w, int *h)
  * @param cfg  配置结构体指针
  * @return     0 成功；-1 失败
  */
-int app_config_load_default(AppConfig *cfg) //预设默认值
+int app_config_load_default(AppConfig *cfg)
 {
     if (!cfg) return -1;
+    
+    /* 清零结构体，确保所有字段都有确定值 */
     memset(cfg, 0, sizeof(*cfg));
 
-    cfg->video_device = "/dev/video0";
-    cfg->width        = 1280;
-    cfg->height       = 720;
-    cfg->fps          = 30;
-    cfg->bitrate      = 2000000;   // 2Mbps default
-    cfg->v4l2_fourcc  = 0;         // auto
+    /* ============ 视频采集默认配置 ============ */
+    cfg->video_device = "/dev/video0";   /* 默认使用第一个视频设备 */
+    cfg->width        = 1280;            /* 720P 宽度 */
+    cfg->height       = 720;             /* 720P 高度 */
+    cfg->fps          = 30;              /* 30 帧/秒 */
+    cfg->bitrate      = 2000000;         /* 2Mbps 码率 */
+    cfg->v4l2_fourcc  = 0;               /* 自动选择像素格式 */
 
-    cfg->audio_device   = "hw:0,0";
-    cfg->sample_rate    = 48000;
-    cfg->channels       = 2;
-    cfg->audio_chunk_ms = 20;
+    /* ============ 音频采集默认配置 ============ */
+    cfg->audio_device   = "hw:0,0";      /* 默认 ALSA 设备 */
+    cfg->sample_rate    = 48000;         /* 48kHz 采样率 */
+    cfg->channels       = 2;             /* 立体声 */
+    cfg->audio_chunk_ms = 20;            /* 20ms 每块 */
 
-    cfg->sink_type        = "file";
-    cfg->output_path_h264 = "out.h264";
-    cfg->output_path_pcm  = "out.pcm";
-    cfg->duration_sec     = 10;
+    /* ============ 输出默认配置 ============ */
+    cfg->sink_type        = "file";      /* 输出到文件 */
+    cfg->output_path_h264 = "out.h264";  /* H.264 输出文件名 */
+    cfg->output_path_pcm  = "out.pcm";   /* PCM 输出文件名 */
+    cfg->duration_sec     = 10;          /* 默认录制 10 秒 */
 
     return 0;
 }
@@ -65,23 +76,23 @@ int app_config_load_default(AppConfig *cfg) //预设默认值
  *
  * @param prog  程序名（一般传 argv[0]）
  */
-void app_config_print_usage(const char *prog) //当用户传 -h/--help 或者遇到未知参数时会用到
+void app_config_print_usage(const char *prog)
 {
     fprintf(stderr,
         "Usage:\n"
         "  %s [options]\n\n"
         "Options:\n"
-        "  --video-dev <path>       Video device node (default: /dev/video0)\n"
-        "  --size <WxH>             Capture size (default: 1280x720)\n"
-        "  --fps <n>                Capture fps (default: 30)\n"
-        "  --bitrate <bps>          H.264 target bitrate (default: 2000000)\n"
-        "  --audio-dev <dev>        ALSA capture device (default: hw:0,0)\n"
-        "  --sr <hz>                Audio sample rate (default: 48000)\n"
-        "  --ch <n>                 Audio channels (default: 2)\n"
-        "  --sec <n>                Record duration seconds (default: 10)\n"
-        "  --out-h264 <file>        Output H.264 file (default: out.h264)\n"
-        "  --out-pcm <file>         Output PCM file (default: out.pcm)\n"
-        "  -h, --help               Show this help\n\n"
+        "  --video-dev <path>       视频设备节点 (默认: /dev/video0)\n"
+        "  --size <WxH>             采集分辨率 (默认: 1280x720)\n"
+        "  --fps <n>                采集帧率 (默认: 30)\n"
+        "  --bitrate <bps>          H.264 目标码率 (默认: 2000000)\n"
+        "  --audio-dev <dev>        ALSA 采集设备 (默认: hw:0,0)\n"
+        "  --sr <hz>                音频采样率 (默认: 48000)\n"
+        "  --ch <n>                 音频声道数 (默认: 2)\n"
+        "  --sec <n>                录制时长秒数 (默认: 10)\n"
+        "  --out-h264 <file>        H.264 输出文件 (默认: out.h264)\n"
+        "  --out-pcm <file>         PCM 输出文件 (默认: out.pcm)\n"
+        "  -h, --help               显示此帮助信息\n\n"
         "Examples:\n"
         "  %s --video-dev /dev/video0 --size 1920x1080 --fps 30 --bitrate 4000000 --sec 10\n"
         "  %s --out-h264 out.h264 --out-pcm out.pcm --sec 10\n",

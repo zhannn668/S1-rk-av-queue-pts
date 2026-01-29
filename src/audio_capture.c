@@ -1,10 +1,21 @@
-// src/audio_capture.c
+/**
+ * @file audio_capture.c
+ * @brief ALSA 音频采集模块实现
+ * 
+ * 封装 ALSA PCM 采集接口，提供：
+ * - audio_capture_open:  打开并配置 ALSA 采集设备
+ * - audio_capture_read:  从设备读取 PCM 数据
+ * - audio_capture_close: 关闭设备并释放资源
+ * 
+ * 当编译环境缺少 ALSA 时，提供占位实现。
+ */
 #include "audio_capture.h"
 #include "log.h"
 
 #include <string.h>
 
-/* ssize_t 在不同平台的声明位置不同：
+/**
+ * ssize_t 在不同平台的声明位置不同：
  * - Linux/Unix: 通常来自 <sys/types.h>
  * - Windows: MSVC 环境可用 SSIZE_T
  */
@@ -15,6 +26,7 @@ typedef SSIZE_T ssize_t;
 #include <sys/types.h>
 #endif
 
+/** 模块日志标签 */
 #define TAG "audio"
 
 #if !RK_ALSA_AVAILABLE
