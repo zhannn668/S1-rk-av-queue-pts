@@ -174,7 +174,6 @@ root@ATK-DLRK3568:/rk_av_project# ./s1_rk_queue
 [I 22:56:16.597] [v4l2] capture closed
 [W 22:56:16.597] [signal] caught signal=15, stopping...
 [I 22:56:16.598] [main] done. video=out.h264 audio=out.pcm
-
 ```
 ---
 
